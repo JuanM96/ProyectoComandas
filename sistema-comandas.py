@@ -10,6 +10,112 @@ import sys
 import logging
 from PIL import Image, ImageTk
 
+class ConfigManager:
+    """Gestor de configuraciones del sistema"""
+    
+    def __init__(self, cursor, conn):
+        self.cursor = cursor
+        self.conn = conn
+        self.configuraciones_por_defecto = {
+            'usar_mesas': {'valor': 'true', 'descripcion': 'Habilitar funcionalidad de mesas', 'tipo': 'boolean'},
+            'usar_categorias': {'valor': 'true', 'descripcion': 'Habilitar categorías de productos', 'tipo': 'boolean'},
+            'usar_observaciones': {'valor': 'true', 'descripcion': 'Permitir observaciones en comandas', 'tipo': 'boolean'},
+            'generar_tickets': {'valor': 'true', 'descripcion': 'Generar tickets PDF automáticamente', 'tipo': 'boolean'},
+            'nombre_negocio': {'valor': 'Restaurante', 'descripcion': 'Nombre del negocio', 'tipo': 'string'},
+            'moneda': {'valor': '$', 'descripcion': 'Símbolo de moneda', 'tipo': 'string'},
+            'actualizacion_automatica': {'valor': 'true', 'descripcion': 'Actualización automática de mesas', 'tipo': 'boolean'},
+            'mostrar_precios_menu': {'valor': 'true', 'descripcion': 'Mostrar precios en el menú de productos', 'tipo': 'boolean'},
+            'permitir_comandas_sin_mesa': {'valor': 'false', 'descripcion': 'Permitir comandas sin asignar mesa', 'tipo': 'boolean'},
+            'mostrar_control_comandas': {'valor': 'true', 'descripcion': 'Mostrar pestaña de control de comandas y estados', 'tipo': 'boolean'}
+        }
+        self.inicializar_configuraciones()
+    
+    def inicializar_configuraciones(self):
+        """Inicializa las configuraciones por defecto si no existen"""
+        for clave, config in self.configuraciones_por_defecto.items():
+            # Verificar si la configuración ya existe
+            self.cursor.execute("SELECT valor FROM configuracion WHERE clave = ?", (clave,))
+            if not self.cursor.fetchone():
+                # No existe, crear con valor por defecto
+                self.cursor.execute('''
+                    INSERT INTO configuracion (clave, valor, descripcion, tipo)
+                    VALUES (?, ?, ?, ?)
+                ''', (clave, config['valor'], config['descripcion'], config['tipo']))
+        self.conn.commit()
+    
+    def get(self, clave, valor_por_defecto=None):
+        """Obtiene el valor de una configuración"""
+        try:
+            self.cursor.execute("SELECT valor, tipo FROM configuracion WHERE clave = ?", (clave,))
+            resultado = self.cursor.fetchone()
+            
+            if resultado:
+                valor, tipo = resultado
+                # Convertir según el tipo
+                if tipo == 'boolean':
+                    return valor.lower() in ('true', '1', 'si', 'yes', 'on')
+                elif tipo == 'integer':
+                    return int(valor)
+                elif tipo == 'float':
+                    return float(valor)
+                else:
+                    return valor
+            else:
+                return valor_por_defecto
+        except Exception as e:
+            print(f"Error al obtener configuración {clave}: {e}")
+            return valor_por_defecto
+    
+    def set(self, clave, valor, descripcion=None):
+        """Establece el valor de una configuración"""
+        try:
+            # Convertir valor a string para almacenamiento
+            valor_str = str(valor).lower() if isinstance(valor, bool) else str(valor)
+            
+            # Verificar si existe la configuración
+            self.cursor.execute("SELECT id FROM configuracion WHERE clave = ?", (clave,))
+            if self.cursor.fetchone():
+                # Actualizar
+                self.cursor.execute('''
+                    UPDATE configuracion 
+                    SET valor = ?, fecha_modificacion = CURRENT_TIMESTAMP
+                    WHERE clave = ?
+                ''', (valor_str, clave))
+            else:
+                # Crear nueva
+                tipo = 'boolean' if isinstance(valor, bool) else 'string'
+                self.cursor.execute('''
+                    INSERT INTO configuracion (clave, valor, descripcion, tipo)
+                    VALUES (?, ?, ?, ?)
+                ''', (clave, valor_str, descripcion or f'Configuración {clave}', tipo))
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error al establecer configuración {clave}: {e}")
+            return False
+    
+    def get_all(self):
+        """Obtiene todas las configuraciones"""
+        try:
+            self.cursor.execute('''
+                SELECT clave, valor, descripcion, tipo 
+                FROM configuracion 
+                ORDER BY clave
+            ''')
+            configuraciones = {}
+            for clave, valor, descripcion, tipo in self.cursor.fetchall():
+                configuraciones[clave] = {
+                    'valor': self.get(clave),  # Usar get() para conversión de tipo
+                    'valor_raw': valor,
+                    'descripcion': descripcion,
+                    'tipo': tipo
+                }
+            return configuraciones
+        except Exception as e:
+            print(f"Error al obtener todas las configuraciones: {e}")
+            return {}
+
 class SistemaComandas:
     def __init__(self, root):
         self.root = root
@@ -46,6 +152,9 @@ class SistemaComandas:
         
         # Inicializar base de datos
         self.init_database()
+        
+        # Inicializar gestor de configuraciones
+        self.config = ConfigManager(self.cursor, self.conn)
         
         # Comanda actual
         self.comanda_actual = []
@@ -176,7 +285,7 @@ class SistemaComandas:
                 fecha TEXT NOT NULL,
                 usuario TEXT NOT NULL,
                 total REAL NOT NULL,
-                estado TEXT DEFAULT 'pendiente',
+                estado TEXT DEFAULT 'Pendiente',
                 observaciones TEXT,
                 FOREIGN KEY (mesa_id) REFERENCES mesas (id)
             )
@@ -194,6 +303,28 @@ class SistemaComandas:
                 FOREIGN KEY (comanda_id) REFERENCES comandas (id)
             )
         ''')
+        
+        # Tabla de configuración del sistema
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS configuracion (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clave TEXT UNIQUE NOT NULL,
+                valor TEXT NOT NULL,
+                descripcion TEXT,
+                tipo TEXT DEFAULT 'string',
+                fecha_modificacion TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Migración: normalizar estados de comandas existentes
+        try:
+            self.cursor.execute("UPDATE comandas SET estado = 'Pendiente' WHERE estado = 'pendiente'")
+            self.cursor.execute("UPDATE comandas SET estado = 'En preparación' WHERE estado = 'en preparacion' OR estado = 'en preparación'")
+            self.cursor.execute("UPDATE comandas SET estado = 'Completada' WHERE estado = 'completada'")
+            self.cursor.execute("UPDATE comandas SET estado = 'Cancelada' WHERE estado = 'cancelada'")
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error en migración de estados de comandas: {e}")
         
         # Insertar usuario admin por defecto si no existe
         self.cursor.execute("SELECT * FROM usuarios WHERE usuario = 'admin'")
@@ -393,15 +524,21 @@ class SistemaComandas:
         
         # Crear pestañas según el rol
         self.crear_pestaña_comandas()
-        self.crear_pestaña_estado_comandas()  # Nueva pestaña para todos los usuarios
+        
+        # Solo mostrar control de comandas si está habilitado
+        if self.config.get('mostrar_control_comandas', True):
+            self.crear_pestaña_estado_comandas()  # Nueva pestaña para todos los usuarios
         
         # Verificar rol de manera segura
         rol_usuario = self.usuario_actual.get('rol', '').lower() if self.usuario_actual and self.usuario_actual.get('rol') else ''
         if rol_usuario in ['admin', 'administrador']:
             self.crear_pestaña_productos()
-            self.crear_pestaña_mesas()
+            # Solo mostrar pestaña de mesas si está habilitada
+            if self.config.get('usar_mesas', True):
+                self.crear_pestaña_mesas()
             self.crear_pestaña_reportes()
             self.crear_pestaña_usuarios()
+            self.crear_pestaña_configuracion()
         
         # Inicializar actualización automática de mesas
         self.root.after(30000, self.actualizar_mesas_automatico)
@@ -411,30 +548,47 @@ class SistemaComandas:
         frame_comandas = tk.Frame(self.notebook, bg='#F8F9FA')
         self.notebook.add(frame_comandas, text='📝 Nueva Comanda')
 
-        # Frame superior - Selección de mesa (altura fija más pequeña)
-        frame_mesa = tk.Frame(frame_comandas, bg='#E9ECEF', relief='raised', bd=2, height=80)
-        frame_mesa.pack(fill='x', padx=5, pady=3)
-        frame_mesa.pack_propagate(False)
+        # Verificar si usar mesas está habilitado
+        usar_mesas = self.config.get('usar_mesas', True)
         
-        tk.Label(
-            frame_mesa,
-            text="🪑 Mesa:",
-            font=('Arial', 12, 'bold'),
-            bg='#E9ECEF'
-        ).pack(side='left', padx=10, pady=5)
-        
-        # Botones de mesas (más compactos)
-        self.frame_mesas = tk.Frame(frame_mesa, bg='#E9ECEF')
-        self.frame_mesas.pack(side='left', fill='x', expand=True, padx=5, pady=5)
-        
-        self.label_mesa_actual = tk.Label(
-            frame_mesa,
-            text="No seleccionada",
-            font=('Arial', 11, 'bold'),
-            bg='#E9ECEF',
-            fg='#DC3545'
-        )
-        self.label_mesa_actual.pack(side='right', padx=10, pady=5)
+        # Frame superior - Selección de mesa (solo si usar_mesas está habilitado)
+        if usar_mesas:
+            frame_mesa = tk.Frame(frame_comandas, bg='#E9ECEF', relief='raised', bd=2, height=80)
+            frame_mesa.pack(fill='x', padx=5, pady=3)
+            frame_mesa.pack_propagate(False)
+            
+            tk.Label(
+                frame_mesa,
+                text="🪑 Mesa:",
+                font=('Arial', 12, 'bold'),
+                bg='#E9ECEF'
+            ).pack(side='left', padx=10, pady=5)
+            
+            # Botones de mesas (más compactos)
+            self.frame_mesas = tk.Frame(frame_mesa, bg='#E9ECEF')
+            self.frame_mesas.pack(side='left', fill='x', expand=True, padx=5, pady=5)
+            
+            self.label_mesa_actual = tk.Label(
+                frame_mesa,
+                text="No seleccionada",
+                font=('Arial', 11, 'bold'),
+                bg='#E9ECEF',
+                fg='#DC3545'
+            )
+            self.label_mesa_actual.pack(side='right', padx=10, pady=5)
+        else:
+            # Si no se usan mesas, crear un frame informativo simple
+            frame_info = tk.Frame(frame_comandas, bg='#E8F5E8', relief='raised', bd=2, height=60)
+            frame_info.pack(fill='x', padx=5, pady=3)
+            frame_info.pack_propagate(False)
+            
+            tk.Label(
+                frame_info,
+                text="🍽️ Modo Sin Mesas - Las comandas se procesarán directamente",
+                font=('Arial', 12, 'bold'),
+                bg='#E8F5E8',
+                fg='#155724'
+            ).pack(pady=15)
         
         # Contenedor principal con scroll si es necesario
         contenedor_principal = tk.Frame(frame_comandas, bg='#F8F9FA')
@@ -444,29 +598,33 @@ class SistemaComandas:
         frame_izq = tk.Frame(contenedor_principal, bg='#F8F9FA')
         frame_izq.pack(side='left', fill='both', expand=True, padx=3)
         
-        # Categorías (botones más pequeños y en una sola fila)
-        tk.Label(
-            frame_izq,
-            text="📂 Categorías",
-            font=('Arial', 12, 'bold'),
-            bg='#F8F9FA'
-        ).pack(pady=5)
+        # Verificar si usar categorías está habilitado
+        usar_categorias = self.config.get('usar_categorias', True)
         
-        # Frame con scroll horizontal para categorías
-        canvas_categorias = tk.Canvas(frame_izq, bg='#F8F9FA', height=60)
-        scrollbar_cat_h = ttk.Scrollbar(frame_izq, orient="horizontal", command=canvas_categorias.xview)
-        self.frame_categorias = tk.Frame(canvas_categorias, bg='#F8F9FA')
-        
-        self.frame_categorias.bind(
-            "<Configure>",
-            lambda e: canvas_categorias.configure(scrollregion=canvas_categorias.bbox("all"))
-        )
-        
-        canvas_categorias.create_window((0, 0), window=self.frame_categorias, anchor="nw")
-        canvas_categorias.configure(xscrollcommand=scrollbar_cat_h.set)
-        
-        canvas_categorias.pack(side="top", fill="x")
-        scrollbar_cat_h.pack(side="top", fill="x")
+        # Categorías (solo si están habilitadas)
+        if usar_categorias:
+            tk.Label(
+                frame_izq,
+                text="📂 Categorías",
+                font=('Arial', 12, 'bold'),
+                bg='#F8F9FA'
+            ).pack(pady=5)
+            
+            # Frame con scroll horizontal para categorías
+            canvas_categorias = tk.Canvas(frame_izq, bg='#F8F9FA', height=60)
+            scrollbar_cat_h = ttk.Scrollbar(frame_izq, orient="horizontal", command=canvas_categorias.xview)
+            self.frame_categorias = tk.Frame(canvas_categorias, bg='#F8F9FA')
+            
+            self.frame_categorias.bind(
+                "<Configure>",
+                lambda e: canvas_categorias.configure(scrollregion=canvas_categorias.bbox("all"))
+            )
+            
+            canvas_categorias.create_window((0, 0), window=self.frame_categorias, anchor="nw")
+            canvas_categorias.configure(xscrollcommand=scrollbar_cat_h.set)
+            
+            canvas_categorias.pack(side="top", fill="x")
+            scrollbar_cat_h.pack(side="top", fill="x")
         
         # Productos (grid más compacto)
         tk.Label(
@@ -546,21 +704,27 @@ class SistemaComandas:
             cursor='hand2'
         ).pack(fill='x', pady=1)
         
-        # Observaciones (más compacto)
-        tk.Label(
-            frame_der,
-            text="📝 Observaciones:",
-            font=('Arial', 10, 'bold'),
-            bg='#F8F9FA'
-        ).pack(pady=(5, 2))
-        
-        self.text_observaciones = tk.Text(
-            frame_der,
-            height=3,
-            font=('Arial', 9),
-            wrap=tk.WORD
-        )
-        self.text_observaciones.pack(fill='x', pady=2)
+        # Observaciones (solo si están habilitadas)
+        usar_observaciones = self.config.get('usar_observaciones', True)
+        if usar_observaciones:
+            tk.Label(
+                frame_der,
+                text="📝 Observaciones:",
+                font=('Arial', 10, 'bold'),
+                bg='#F8F9FA'
+            ).pack(pady=(5, 2))
+            
+            self.text_observaciones = tk.Text(
+                frame_der,
+                height=3,
+                font=('Arial', 9),
+                wrap=tk.WORD
+            )
+            self.text_observaciones.pack(fill='x', pady=2)
+        else:
+            # Crear widget dummy para evitar errores
+            self.text_observaciones = tk.Text(frame_der, height=0)
+            self.text_observaciones.pack_forget()  # No mostrarlo
         
         # Total
         self.label_total = tk.Label(
@@ -585,12 +749,22 @@ class SistemaComandas:
         ).pack(fill='x', pady=5)
         
         # Inicializar
-        self.cargar_mesas()
-        self.cargar_categorias()
+        if usar_mesas:
+            self.cargar_mesas()
+        if usar_categorias:
+            self.cargar_categorias()
         self.cargar_productos()
     
     def cargar_mesas(self):
         """Carga los botones de mesas"""
+        # Verificar si las mesas están habilitadas
+        if not self.config.get('usar_mesas', True):
+            return
+            
+        # Verificar si el frame de mesas existe
+        if not hasattr(self, 'frame_mesas'):
+            return
+            
         # Limpiar frame
         for widget in self.frame_mesas.winfo_children():
             widget.destroy()
@@ -692,6 +866,10 @@ class SistemaComandas:
     
     def cargar_categorias(self):
         """Carga los botones de categorías"""
+        # Verificar si las categorías están habilitadas
+        if not self.config.get('usar_categorias', True):
+            return
+            
         # Limpiar frame
         for widget in self.frame_categorias.winfo_children():
             widget.destroy()
@@ -801,14 +979,16 @@ class SistemaComandas:
                 wraplength=170
             ).pack(pady=2)
             
-            # Precio
-            tk.Label(
-                frame_producto,
-                text=f"${producto[2]}",
-                font=('Arial', 14, 'bold'),
-                bg='white',
-                fg='#DC3545'
-            ).pack()
+            # Precio (solo si está habilitado)
+            mostrar_precios = self.config.get('mostrar_precios_menu', True)
+            if mostrar_precios:
+                tk.Label(
+                    frame_producto,
+                    text=f"${producto[2]}",
+                    font=('Arial', 14, 'bold'),
+                    bg='white',
+                    fg='#DC3545'
+                ).pack()
             
             # Descripción (más corta)
             if producto[5]:  # descripcion
@@ -837,9 +1017,11 @@ class SistemaComandas:
     
     def agregar_a_comanda(self, producto):
         """Agrega un producto a la comanda actual"""
-        if not self.mesa_actual:
-            messagebox.showwarning("Mesa", "Primero selecciona una mesa")
-            return
+        # Solo verificar mesa si las mesas están habilitadas y no se permiten comandas sin mesa
+        if self.config.get('usar_mesas', True) and not self.config.get('permitir_comandas_sin_mesa', False):
+            if not self.mesa_actual:
+                messagebox.showwarning("Mesa", "Primero selecciona una mesa")
+                return
         
         # Verificar si ya está en la comanda
         for item in self.comanda_actual:
@@ -900,9 +1082,17 @@ class SistemaComandas:
             messagebox.showwarning("Comanda Vacía", "La comanda está vacía")
             return
         
-        if not self.mesa_actual:
+        # Verificar configuración de mesas
+        usar_mesas = self.config.get('usar_mesas', True)
+        permitir_sin_mesa = self.config.get('permitir_comandas_sin_mesa', False)
+        
+        # Validación de mesa según configuración
+        if usar_mesas and not self.mesa_actual and not permitir_sin_mesa:
             messagebox.showwarning("Mesa", "Selecciona una mesa")
             return
+        elif not usar_mesas:
+            # En modo sin mesas, no requerimos mesa
+            self.mesa_actual = None
         
         # Calcular total
         total = sum(item['precio'] * item['cantidad'] for item in self.comanda_actual)
@@ -914,12 +1104,15 @@ class SistemaComandas:
         # Obtener observaciones
         observaciones = self.text_observaciones.get("1.0", tk.END).strip()
         
+        # Determinar mesa_id según configuración
+        mesa_id = self.mesa_actual[0] if self.mesa_actual else None
+        
         # Guardar comanda
         self.cursor.execute('''
-            INSERT INTO comandas (numero_comanda, mesa_id, fecha, usuario, total, observaciones)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (numero_comanda, self.mesa_actual[0], fecha_actual.strftime('%Y-%m-%d %H:%M:%S'), 
-              self.usuario_actual['nombre'], total, observaciones))
+            INSERT INTO comandas (numero_comanda, mesa_id, fecha, usuario, total, estado, observaciones)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (numero_comanda, mesa_id, fecha_actual.strftime('%Y-%m-%d %H:%M:%S'), 
+              self.usuario_actual['nombre'], total, 'Pendiente', observaciones))
         
         comanda_id = self.cursor.lastrowid
         
@@ -930,15 +1123,17 @@ class SistemaComandas:
                 VALUES (?, ?, ?, ?)
             ''', (comanda_id, item['nombre'], item['cantidad'], item['precio']))
         
-        # Marcar mesa como ocupada
-        self.cursor.execute('''
-            UPDATE mesas SET estado = 'ocupada' WHERE id = ?
-        ''', (self.mesa_actual[0],))
+        # Marcar mesa como ocupada (solo si se usan mesas)
+        if usar_mesas and self.mesa_actual:
+            self.cursor.execute('''
+                UPDATE mesas SET estado = 'ocupada' WHERE id = ?
+            ''', (self.mesa_actual[0],))
         
         self.conn.commit()
         
-        # Generar ticket
-        if messagebox.askyesno("Ticket", "¿Deseas generar el ticket de comanda?"):
+        # Generar ticket (según configuración)
+        generar_tickets = self.config.get('generar_tickets', True)
+        if generar_tickets and messagebox.askyesno("Ticket", "¿Deseas generar el ticket de comanda?"):
             self.generar_ticket_comanda(comanda_id, numero_comanda, total, observaciones)
         
         # Limpiar comanda
@@ -946,19 +1141,23 @@ class SistemaComandas:
         self.actualizar_comanda_display()
         self.text_observaciones.delete("1.0", tk.END)
         
-        # Actualizar mesas
-        mesa_nombre = self.mesa_actual[1] if self.mesa_actual else 'N/A'
-        self.cargar_mesas()
+        # Actualizar mesas (solo si se usan)
+        mesa_nombre = self.mesa_actual[1] if self.mesa_actual else ('Sin mesa' if not usar_mesas else 'N/A')
+        if usar_mesas:
+            self.cargar_mesas()
         
         # Limpiar selección de mesa
         self.mesa_actual = None
-        self.label_mesa_actual.config(text="No seleccionada")
+        if hasattr(self, 'label_mesa_actual'):
+            self.label_mesa_actual.config(text="No seleccionada")
         
-        messagebox.showinfo("Éxito", 
-            f"✅ Comanda {numero_comanda} enviada exitosamente!\n\n"
-            f"💰 Total: ${total}\n"
-            f"🪑 Mesa: {mesa_nombre}\n\n"
-            f"📄 Los tickets se guardan en la carpeta 'tickets'")
+        # Mensaje de éxito adaptado
+        mensaje_exito = f"✅ Comanda {numero_comanda} enviada exitosamente!\n\n💰 Total: ${total}\n"
+        if usar_mesas:
+            mensaje_exito += f"🪑 Mesa: {mesa_nombre}\n"
+        mensaje_exito += f"\n📄 Los tickets se guardan en la carpeta 'tickets'"
+        
+        messagebox.showinfo("Éxito", mensaje_exito)
     
     def crear_pestaña_estado_comandas(self):
         """Crea la pestaña para gestionar el estado de comandas y mesas"""
@@ -1117,7 +1316,7 @@ class SistemaComandas:
             cursor.execute("""
                 SELECT estado, COUNT(*) 
                 FROM comandas 
-                WHERE DATE(fecha_creacion) = DATE('now') 
+                WHERE DATE(fecha) = DATE('now') 
                 GROUP BY estado
             """)
             stats_comandas_hoy = dict(cursor.fetchall())
@@ -1160,8 +1359,8 @@ class SistemaComandas:
         cursor.execute("""
             SELECT 
                 c.numero_comanda,
-                m.nombre as mesa_nombre,
-                m.estado as mesa_estado,
+                COALESCE(m.nombre, 'Sin mesa') as mesa_nombre,
+                COALESCE(m.estado, 'N/A') as mesa_estado,
                 c.estado as comanda_estado,
                 c.fecha,
                 c.usuario,
@@ -2802,6 +3001,296 @@ class SistemaComandas:
         
         # Enfocar primer campo
         entry_nueva_password.focus()
+    
+    def crear_pestaña_configuracion(self):
+        """Crea la pestaña de configuración del sistema (solo admin)"""
+        frame_config = tk.Frame(self.notebook, bg='#F8F9FA')
+        self.notebook.add(frame_config, text='⚙️ Configuración')
+        
+        # Marco principal
+        main_frame = tk.Frame(frame_config, bg='#F8F9FA')
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        # Título
+        title_label = tk.Label(
+            main_frame,
+            text="⚙️ Configuración del Sistema",
+            font=('Arial', 20, 'bold'),
+            bg='#F8F9FA',
+            fg='#2C3E50'
+        )
+        title_label.pack(pady=(0, 10))
+        
+        # Descripción
+        desc_label = tk.Label(
+            main_frame,
+            text="Configura las funcionalidades del sistema según las necesidades de tu negocio",
+            font=('Arial', 12),
+            bg='#F8F9FA',
+            fg='#6C757D'
+        )
+        desc_label.pack(pady=(0, 20))
+        
+        # Frame para botones de acción (ARRIBA)
+        action_frame = tk.Frame(main_frame, bg='#F8F9FA')
+        action_frame.pack(fill='x', pady=(0, 20))
+        
+        # Centrar los botones
+        buttons_container = tk.Frame(action_frame, bg='#F8F9FA')
+        buttons_container.pack(anchor='center')
+        
+        # Botón Guardar Configuración
+        btn_guardar = tk.Button(
+            buttons_container,
+            text="💾 Guardar Configuración",
+            font=('Arial', 14, 'bold'),
+            bg='#28A745',
+            fg='white',
+            command=self.guardar_configuracion,
+            relief='flat',
+            padx=30,
+            pady=12,
+            cursor='hand2'
+        )
+        btn_guardar.pack(side='left', padx=10)
+        
+        # Botón Restaurar Valores por Defecto
+        btn_restaurar = tk.Button(
+            buttons_container,
+            text="🔄 Restaurar Valores por Defecto",
+            font=('Arial', 12),
+            bg='#FFC107',
+            fg='black',
+            command=self.restaurar_configuracion_defecto,
+            relief='flat',
+            padx=20,
+            pady=10,
+            cursor='hand2'
+        )
+        btn_restaurar.pack(side='left', padx=10)
+        
+        # Botón Aplicar y Reiniciar
+        btn_aplicar = tk.Button(
+            buttons_container,
+            text="🔄 Aplicar y Reiniciar Interfaz",
+            font=('Arial', 12),
+            bg='#17A2B8',
+            fg='white',
+            command=self.aplicar_configuracion,
+            relief='flat',
+            padx=20,
+            pady=10,
+            cursor='hand2'
+        )
+        btn_aplicar.pack(side='left', padx=10)
+        
+        # Frame principal para las configuraciones (HORIZONTAL)
+        self.frame_config_scroll = tk.Frame(main_frame, bg='#F8F9FA')
+        self.frame_config_scroll.pack(fill='both', expand=True)
+        
+        # Cargar configuraciones actuales
+        self.cargar_configuraciones_interfaz()
+    
+    def cargar_configuraciones_interfaz(self):
+        """Carga las configuraciones en la interfaz con layout horizontal"""
+        # Limpiar frame
+        for widget in self.frame_config_scroll.winfo_children():
+            widget.destroy()
+        
+        # Diccionario para almacenar los controles
+        self.controles_config = {}
+        
+        # Obtener todas las configuraciones
+        configuraciones = self.config.get_all()
+        
+        # Agrupar configuraciones por categorías
+        categorias = {
+            'Funcionalidades Principales': [
+                'usar_mesas', 'usar_categorias', 'usar_observaciones', 
+                'generar_tickets', 'permitir_comandas_sin_mesa', 'mostrar_control_comandas'
+            ],
+            'Interfaz y Presentación': [
+                'mostrar_precios_menu', 'actualizacion_automatica'
+            ],
+            'Información del Negocio': [
+                'nombre_negocio', 'moneda'
+            ]
+        }
+        
+        # Configurar el layout horizontal
+        column = 0
+        for categoria, claves in categorias.items():
+            # Crear frame para la categoría
+            categoria_frame = tk.LabelFrame(
+                self.frame_config_scroll,
+                text=categoria,
+                font=('Arial', 12, 'bold'),
+                bg='#F8F9FA',
+                fg='#2C3E50',
+                padx=15,
+                pady=10,
+                relief='groove',
+                bd=2
+            )
+            categoria_frame.grid(row=0, column=column, sticky='nsew', padx=10, pady=5)
+            
+            config_row = 0
+            for clave in claves:
+                if clave in configuraciones:
+                    config = configuraciones[clave]
+                    self.crear_control_configuracion(
+                        categoria_frame, clave, config, config_row
+                    )
+                    config_row += 1
+            
+            column += 1
+        
+        # Configurar peso de columnas para distribución uniforme
+        for i in range(len(categorias)):
+            self.frame_config_scroll.columnconfigure(i, weight=1)
+        self.frame_config_scroll.rowconfigure(0, weight=1)
+    
+    def crear_control_configuracion(self, parent, clave, config, row):
+        """Crea un control para una configuración específica"""
+        # Frame para la configuración
+        config_frame = tk.Frame(parent, bg='#F8F9FA')
+        config_frame.grid(row=row, column=0, sticky='ew', pady=3, padx=5)
+        config_frame.columnconfigure(0, weight=1)
+        
+        # Control según el tipo
+        if config['tipo'] == 'boolean':
+            # Checkbox para valores booleanos
+            var = tk.BooleanVar()
+            var.set(config['valor'])
+            control = tk.Checkbutton(
+                config_frame,
+                text=config['descripcion'],
+                variable=var,
+                font=('Arial', 10),
+                bg='#F8F9FA',
+                activebackground='#F8F9FA',
+                anchor='w',
+                justify='left',
+                wraplength=180
+            )
+            control.grid(row=0, column=0, sticky='ew', pady=2)
+            self.controles_config[clave] = var
+            
+        else:
+            # Etiqueta de descripción para campos de texto
+            label = tk.Label(
+                config_frame,
+                text=config['descripcion'],
+                font=('Arial', 10),
+                bg='#F8F9FA',
+                anchor='w',
+                wraplength=180
+            )
+            label.grid(row=0, column=0, sticky='ew', pady=2)
+            
+            # Entry para valores string/integer/float
+            var = tk.StringVar()
+            var.set(str(config['valor']))
+            control = tk.Entry(
+                config_frame,
+                textvariable=var,
+                font=('Arial', 10),
+                width=20
+            )
+            control.grid(row=1, column=0, sticky='ew', padx=5, pady=2)
+            self.controles_config[clave] = var
+    
+    def guardar_configuracion(self):
+        """Guarda todas las configuraciones modificadas"""
+        try:
+            cambios_realizados = []
+            
+            for clave, control in self.controles_config.items():
+                valor_actual = self.config.get(clave)
+                nuevo_valor = control.get()
+                
+                # Comparar valores (convertir boolean a string para comparación)
+                if isinstance(valor_actual, bool):
+                    valor_actual_str = str(valor_actual).lower()
+                    nuevo_valor_str = str(nuevo_valor).lower()
+                else:
+                    valor_actual_str = str(valor_actual)
+                    nuevo_valor_str = str(nuevo_valor)
+                
+                if valor_actual_str != nuevo_valor_str:
+                    # Ha cambiado, guardar
+                    if self.config.set(clave, nuevo_valor):
+                        cambios_realizados.append(clave)
+            
+            if cambios_realizados:
+                mensaje = f"✅ Configuración guardada exitosamente!\n\n"
+                mensaje += f"Configuraciones modificadas:\n"
+                for clave in cambios_realizados:
+                    config_info = self.config.get_all()[clave]
+                    mensaje += f"• {config_info['descripcion']}\n"
+                
+                mensaje += f"\n⚠️ Nota: Algunos cambios requieren reiniciar la interfaz para aplicarse completamente."
+                
+                messagebox.showinfo("Configuración Guardada", mensaje)
+            else:
+                messagebox.showinfo("Sin Cambios", "No se detectaron cambios en la configuración.")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al guardar configuración: {str(e)}")
+    
+    def restaurar_configuracion_defecto(self):
+        """Restaura todas las configuraciones a sus valores por defecto"""
+        if messagebox.askyesno("Confirmar Restauración", 
+                              "¿Estás seguro de que deseas restaurar todas las configuraciones a sus valores por defecto?\n\n"
+                              "Esta acción no se puede deshacer."):
+            try:
+                # Restaurar cada configuración a su valor por defecto
+                for clave, config_defecto in self.config.configuraciones_por_defecto.items():
+                    self.config.set(clave, config_defecto['valor'])
+                
+                # Recargar la interfaz
+                self.cargar_configuraciones_interfaz()
+                
+                messagebox.showinfo("Configuración Restaurada", 
+                                   "Todas las configuraciones han sido restauradas a sus valores por defecto.")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Error al restaurar configuración: {str(e)}")
+    
+    def aplicar_configuracion(self):
+        """Aplica la configuración guardando primero y luego reiniciando la interfaz"""
+        # Primero guardar
+        self.guardar_configuracion()
+        
+        # Luego preguntar si quiere reiniciar la interfaz
+        if messagebox.askyesno("Aplicar Configuración", 
+                              "Para aplicar completamente los cambios es recomendable reiniciar la interfaz.\n\n"
+                              "¿Deseas cerrar sesión y volver a iniciar? "
+                              "(La aplicación se mantendrá abierta en la pantalla de login)"):
+            # Volver al login sin cerrar la aplicación
+            self.volver_al_login()
+    
+    def volver_al_login(self):
+        """Vuelve a la pantalla de login sin cerrar la aplicación"""
+        try:
+            # Destruir la interfaz principal si existe
+            for widget in self.root.winfo_children():
+                if widget != self.login_frame if hasattr(self, 'login_frame') else True:
+                    widget.destroy()
+            
+            # Reset del estado
+            self.usuario_actual = None
+            self.comanda_actual = []
+            self.mesa_actual = None
+            self.numero_comanda = None
+            
+            # Mostrar login nuevamente
+            self.mostrar_login()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al volver al login: {str(e)}")
+            # Si hay error, hacer logout normal
+            self.logout()
     
     def logout(self):
         """Cierra sesión y vuelve al login"""
