@@ -99,8 +99,9 @@ Thumbs.db
 # Logs
 *.log
 
-# Tickets generados (opcional - descomentar si no quieres versionar tickets)
-# tickets/*.pdf
+# Tickets generados - archivos PDF generados automáticamente
+tickets/
+tickets/*.pdf
 
 # Archivos temporales
 *.tmp
