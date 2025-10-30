@@ -767,7 +767,7 @@ class SistemaComandas:
         scrollbar_comanda.config(command=self.lista_comanda.yview)
         
         # Botones de comanda (más compactos)
-        frame_botones_comanda = tk.Frame(frame_der, bg='#F8F9FA')
+        frame_botones_comanda = tk.Frame(frame_der, bg='#D5DBDB')
         frame_botones_comanda.pack(fill='x', pady=5)
         
         tk.Button(
@@ -799,16 +799,30 @@ class SistemaComandas:
                 frame_der,
                 text="📝 Observaciones:",
                 font=('Arial', 10, 'bold'),
-                bg='#F8F9FA'
+                bg='#D5DBDB',  # Mismo color que frame_der
+                fg='#2C3E50'
             ).pack(pady=(5, 2))
             
             self.text_observaciones = tk.Text(
                 frame_der,
                 height=3,
                 font=('Arial', 9),
-                wrap=tk.WORD
+                wrap=tk.WORD,
+                bg='#FFFFFF',  # Fondo blanco para mayor contraste
+                fg='#2C3E50',  # Texto oscuro
+                relief='solid',  # Borde sólido más visible
+                bd=2,  # Borde más grueso
+                highlightthickness=1,  # Línea de enfoque
+                highlightcolor='#3498DB',  # Color azul cuando está enfocado
+                highlightbackground='#BDC3C7',  # Color gris cuando no está enfocado
+                insertbackground='#2C3E50',  # Color del cursor
+                selectbackground='#85C1E9',  # Color de selección
+                selectforeground='#2C3E50'  # Color de texto seleccionado
             )
-            self.text_observaciones.pack(fill='x', pady=2)
+            self.text_observaciones.pack(fill='x', pady=2, padx=2)
+            
+            # Agregar placeholder text
+            self.configurar_placeholder_observaciones()
         else:
             # Crear widget dummy para evitar errores
             self.text_observaciones = tk.Text(frame_der, height=0)
@@ -819,7 +833,7 @@ class SistemaComandas:
             frame_der,
             text="TOTAL: $0",
             font=('Arial', 16, 'bold'),
-            bg='#F8F9FA',
+            bg='#D5DBDB',  # Mismo color que frame_der
             fg='#DC3545'
         )
         self.label_total.pack(pady=10)
@@ -1048,8 +1062,8 @@ class SistemaComandas:
                 self.frame_productos_scroll,
                 text="No hay productos disponibles",
                 font=('Arial', 12),
-                bg='#F8F9FA',
-                fg='gray'
+                bg='#ECF0F1',  # Mismo color que el fondo de productos
+                fg='#7F8C8D'  # Gris medio
             ).pack(expand=True)
             return
         
@@ -1196,6 +1210,28 @@ class SistemaComandas:
         # Forzar actualización del layout
         self.frame_productos_scroll.update_idletasks()
     
+    def configurar_placeholder_observaciones(self):
+        """Configura el placeholder para el campo de observaciones"""
+        placeholder_text = "Escribe observaciones especiales aquí (opcional)..."
+        
+        def on_focus_in(event):
+            if self.text_observaciones.get("1.0", tk.END).strip() == placeholder_text:
+                self.text_observaciones.delete("1.0", tk.END)
+                self.text_observaciones.config(fg='#2C3E50')
+        
+        def on_focus_out(event):
+            if not self.text_observaciones.get("1.0", tk.END).strip():
+                self.text_observaciones.insert("1.0", placeholder_text)
+                self.text_observaciones.config(fg='#7F8C8D')
+        
+        # Configurar placeholder inicial
+        self.text_observaciones.insert("1.0", placeholder_text)
+        self.text_observaciones.config(fg='#7F8C8D')
+        
+        # Vincular eventos
+        self.text_observaciones.bind("<FocusIn>", on_focus_in)
+        self.text_observaciones.bind("<FocusOut>", on_focus_out)
+    
     def on_window_resize(self, event):
         """Maneja el redimensionamiento de la ventana con debounce"""
         # Solo procesar eventos de redimensionamiento de la ventana principal
@@ -1307,12 +1343,16 @@ class SistemaComandas:
         # Calcular total
         total = sum(item['precio'] * item['cantidad'] for item in self.comanda_actual)
         
-        # Generar número de comanda
+        # Generar número de comanda con número secuencial
         fecha_actual = datetime.now()
-        numero_comanda = f"CMD-{fecha_actual.strftime('%Y%m%d-%H%M%S')}"
+        numero_ticket = self.obtener_siguiente_numero_ticket()
+        numero_comanda = f"CMD-{fecha_actual.strftime('%Y%m%d')}-{numero_ticket}"
         
         # Obtener observaciones
         observaciones = self.text_observaciones.get("1.0", tk.END).strip()
+        placeholder_text = "Escribe observaciones especiales aquí (opcional)..."
+        if observaciones == placeholder_text:
+            observaciones = ""  # Vacío si es solo el placeholder
         
         # Determinar mesa_id según configuración
         mesa_id = self.mesa_actual[0] if self.mesa_actual else None
@@ -1350,6 +1390,11 @@ class SistemaComandas:
         self.comanda_actual = []
         self.actualizar_comanda_display()
         self.text_observaciones.delete("1.0", tk.END)
+        
+        # Restaurar placeholder de observaciones
+        placeholder_text = "Escribe observaciones especiales aquí (opcional)..."
+        self.text_observaciones.insert("1.0", placeholder_text)
+        self.text_observaciones.config(fg='#7F8C8D')
         
         # Actualizar mesas (solo si se usan)
         mesa_nombre = self.mesa_actual[1] if self.mesa_actual else ('Sin mesa' if not usar_mesas else 'N/A')
@@ -1795,8 +1840,32 @@ class SistemaComandas:
             # Intentar nueva actualización en 60 segundos si hay error
             self.root.after(60000, self.actualizar_mesas_automatico)
 
+    def obtener_siguiente_numero_ticket(self):
+        """Obtiene el siguiente número de ticket secuencial (01-99)"""
+        try:
+            # Buscar el último número de ticket usado hoy
+            self.cursor.execute('''
+                SELECT MAX(CAST(SUBSTR(numero_comanda, -2) AS INTEGER)) as ultimo_numero
+                FROM comandas 
+                WHERE numero_comanda LIKE '%-%__'
+                AND DATE(fecha) = DATE('now')
+            ''')
+            resultado = self.cursor.fetchone()
+            ultimo_numero = resultado[0] if resultado and resultado[0] else 0
+            
+            # Incrementar y resetear a 01 si llega a 100
+            siguiente_numero = (ultimo_numero + 1) % 100
+            if siguiente_numero == 0:
+                siguiente_numero = 1
+                
+            return f"{siguiente_numero:02d}"  # Formato 01, 02, ..., 99
+        except Exception as e:
+            print(f"Error al obtener número de ticket: {e}")
+            # Fallback: usar timestamp
+            return datetime.now().strftime("%S")
+
     def generar_ticket_comanda(self, comanda_id, numero_comanda, total, observaciones):
-        """Genera un ticket PDF de la comanda con formato específico de cocina"""
+        """Genera un ticket PDF con formato de troquel para papel de 7cm x 20cm"""
         try:
             # Crear carpeta 'tickets' en el directorio de la aplicación
             app_dir = self.get_app_directory()
@@ -1806,111 +1875,146 @@ class SistemaComandas:
                 os.makedirs(carpeta_tickets)
                 print(f"Carpeta {carpeta_tickets} creada")
 
-            pdf = FPDF()
+            # Configurar PDF para papel de 7cm x 20cm
+            pdf = FPDF(orientation='P', unit='cm', format=(7, 20))
             pdf.add_page()
-            pdf.set_font('Arial', '', 12)
+            pdf.set_auto_page_break(auto=False)  # Desactivar salto automático
             
-            # Mesa que ordenó (centrado en la parte superior)
-            mesa_nombre = self.mesa_actual[1] if self.mesa_actual else "Mesa Sin Asignar"
-            pdf.set_font('Arial', 'B', 16)
-            pdf.cell(0, 8, f'{mesa_nombre} {mesa_nombre}', 0, 1, 'C')
+            # ==================== PARTE SUPERIOR (ARRIBA DEL TROQUEL - 14cm) ====================
             
-            # Ficha
-            pdf.set_font('Arial', '', 12)
-            pdf.cell(0, 6, f'Ficha: {numero_comanda}', 0, 1, 'L')
+            # Obtener información del negocio
+            nombre_negocio = self.config.get('nombre_negocio', 'Restaurante')
             
-            # Terminal (información del sistema)
-            import platform
-            import socket
-            try:
-                hostname = socket.gethostname()
-                terminal_info = f'Terminal:{hostname} {platform.system()}'
-            except:
-                terminal_info = 'Terminal:Sistema Comandas'
+            # Header del negocio (centrado)
+            pdf.set_font('Arial', 'B', 12)
+            pdf.cell(0, 0.8, nombre_negocio.upper(), 0, 1, 'C')
+            pdf.ln(0.2)
             
-            pdf.cell(0, 6, terminal_info, 0, 1, 'L')
+            # Mesa
+            mesa_nombre = self.mesa_actual[1] if self.mesa_actual else "Sin Mesa"
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 0.6, f"MESA: {mesa_nombre}", 0, 1, 'C')
+            pdf.ln(0.2)
             
-            # Fecha (formato específico)
-            fecha_actual = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-            pdf.cell(0, 6, f'Fecha:{fecha_actual}', 0, 1, 'L')
+            # Número de comanda (destacado)
+            numero_ticket = numero_comanda.split('-')[-1]  # Extraer solo el número final
+            pdf.set_font('Arial', 'B', 14)
+            pdf.cell(0, 0.8, f"COMANDA N° {numero_ticket}", 0, 1, 'C')
+            pdf.ln(0.3)
             
-            pdf.ln(3)
+            # Fecha y hora
+            fecha_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
+            pdf.set_font('Arial', '', 8)
+            pdf.cell(0, 0.5, f"Fecha: {fecha_actual}", 0, 1, 'C')
             
-            # Línea de puntos separadora
-            pdf.set_font('Arial', '', 10)
-            pdf.cell(0, 4, '.' * 45, 0, 1, 'C')
+            # Usuario/Mesero
+            usuario_nombre = self.usuario_actual.get('nombre', 'Usuario') if self.usuario_actual else 'Sistema'
+            pdf.cell(0, 0.5, f"Mesero: {usuario_nombre}", 0, 1, 'C')
+            pdf.ln(0.4)
             
-            pdf.ln(2)
+            # Línea separadora
+            pdf.set_font('Arial', '', 6)
+            pdf.cell(0, 0.3, '='*45, 0, 1, 'C')
+            pdf.ln(0.2)
             
             # Obtener items de la comanda
             self.cursor.execute('''
-                SELECT producto_nombre, cantidad, observaciones
+                SELECT producto_nombre, cantidad, precio_unitario, observaciones
                 FROM items_comanda WHERE comanda_id = ?
                 ORDER BY id
             ''', (comanda_id,))
-            
             items = self.cursor.fetchall()
-            total_articulos = 0
             
-            # Lista de platillos con numeración
-            pdf.set_font('Arial', '', 11)
+            # Lista de productos
+            pdf.set_font('Arial', '', 8)
+            total_items = 0
+            
             for i, item in enumerate(items, 1):
                 cantidad = item[1]
                 nombre_producto = item[0]
-                observaciones_item = item[2]
+                precio_unitario = item[2]
+                observaciones_item = item[3]
+                subtotal = cantidad * precio_unitario
+                total_items += cantidad
                 
-                total_articulos += cantidad
+                # Línea del producto
+                pdf.cell(0, 0.4, f"{cantidad}x {nombre_producto}", 0, 1, 'L')
+                pdf.cell(0, 0.4, f"    ${subtotal:.2f}", 0, 1, 'R')
                 
-                # Formato: (No. de Plato) Cantidad Nombre del Platillo
-                linea_producto = f'({i}) {cantidad} {nombre_producto}'
-                pdf.cell(0, 5, linea_producto, 0, 1, 'L')
-                
-                # Si hay observaciones del item, mostrarlas como complementos con asterisco
+                # Observaciones del item si las hay
                 if observaciones_item and observaciones_item.strip():
-                    # Dividir observaciones por líneas y mostrar cada una con asterisco
-                    obs_lines = observaciones_item.strip().split('\n')
-                    for obs_line in obs_lines:
-                        if obs_line.strip():
-                            pdf.cell(0, 5, f'* {obs_line.strip()}', 0, 1, 'L')
+                    pdf.set_font('Arial', 'I', 7)
+                    pdf.cell(0, 0.3, f"    * {observaciones_item}", 0, 1, 'L')
+                    pdf.set_font('Arial', '', 8)
+                
+                pdf.ln(0.1)
             
-            # Si hay observaciones generales de la comanda, también mostrarlas
+            # Observaciones generales
             if observaciones and observaciones.strip():
-                pdf.ln(2)
+                pdf.ln(0.2)
+                pdf.set_font('Arial', 'B', 8)
+                pdf.cell(0, 0.4, "OBSERVACIONES:", 0, 1, 'L')
+                pdf.set_font('Arial', '', 8)
+                # Dividir observaciones largas
                 obs_lines = observaciones.strip().split('\n')
                 for obs_line in obs_lines:
                     if obs_line.strip():
-                        pdf.cell(0, 5, f'* {obs_line.strip()}', 0, 1, 'L')
+                        pdf.cell(0, 0.4, f"* {obs_line.strip()}", 0, 1, 'L')
             
-            pdf.ln(3)
+            pdf.ln(0.3)
             
-            # Línea de puntos separadora
-            pdf.set_font('Arial', '', 10)
-            pdf.cell(0, 4, '.' * 45, 0, 1, 'C')
+            # Total
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 0.6, f"TOTAL: ${total:.2f}", 0, 1, 'C')
+            pdf.cell(0, 0.5, f"Total Items: {total_items}", 0, 1, 'C')
             
-            pdf.ln(2)
+            # ==================== LÍNEA DE TROQUEL ====================
+            pdf.ln(0.4)
+            pdf.set_font('Arial', '', 6)
+            # Línea punteada para indicar donde cortar
+            pdf.cell(0, 0.3, '- '*25, 0, 1, 'C')
+            pdf.cell(0, 0.2, 'CORTAR AQUÍ', 0, 1, 'C')
+            pdf.cell(0, 0.3, '- '*25, 0, 1, 'C')
+            pdf.ln(0.3)
             
-            # Total de artículos
-            pdf.set_font('Arial', '', 12)
-            pdf.cell(0, 6, f'Total de articulos: {total_articulos}.0', 0, 1, 'L')
+            # ==================== PARTE INFERIOR (PARA EL CLIENTE - 6cm) ====================
             
-            # Guardar en subcarpeta 'tickets' del directorio de la aplicación
+            # Header del negocio para cliente
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 0.6, nombre_negocio.upper(), 0, 1, 'C')
+            pdf.ln(0.3)
+            
+            # Número de comanda GRANDE para el cliente
+            pdf.set_font('Arial', 'B', 24)
+            pdf.cell(0, 1.5, numero_ticket, 0, 1, 'C')
+            pdf.ln(0.2)
+            
+            # Instrucciones para el cliente
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 0.6, "RETIRE SU ORDEN", 0, 1, 'C')
+            pdf.set_font('Arial', '', 8)
+            pdf.cell(0, 0.5, "Presente este ticket", 0, 1, 'C')
+            pdf.ln(0.3)
+            
+            # Información adicional
+            pdf.cell(0, 0.4, f"Mesa: {mesa_nombre}", 0, 1, 'C')
+            pdf.cell(0, 0.4, f"Hora: {datetime.now().strftime('%H:%M')}", 0, 1, 'C')
+            
+            # Guardar archivo
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(carpeta_tickets, f'comanda_{numero_comanda}_{timestamp}.pdf')
-            
-            # Verificar que el directorio existe antes de guardar
-            if not os.path.exists(carpeta_tickets):
-                os.makedirs(carpeta_tickets)
+            filename = os.path.join(carpeta_tickets, f'ticket_{numero_ticket}_{timestamp}.pdf')
             
             pdf.output(filename)
             
             # Verificar que el archivo se creó
             if os.path.exists(filename):
-                # Obtener ruta absoluta
                 ruta_absoluta = os.path.abspath(filename)
                 messagebox.showinfo("Ticket Generado", 
-                    f"Ticket de comanda guardado exitosamente:\n\n{ruta_absoluta}\n\nTamaño: {os.path.getsize(filename)} bytes")
+                    f"Ticket de comanda generado exitosamente!\n\n"
+                    f"Número: {numero_ticket}\n"
+                    f"Archivo: {ruta_absoluta}\n\n"
+                    f"Formato: Papel con troquel 7x20cm")
                 
-                # Abrir la carpeta donde se guardó
                 if messagebox.askyesno("Abrir Carpeta", "¿Deseas abrir la carpeta donde se guardó el ticket?"):
                     os.startfile(os.path.dirname(ruta_absoluta))
             else:
@@ -1920,8 +2024,6 @@ class SistemaComandas:
             error_msg = f"Error al generar ticket: {str(e)}\n\nDetalles técnicos:\n"
             error_msg += f"- Directorio de aplicación: {self.get_app_directory()}\n"
             error_msg += f"- Carpeta tickets: {os.path.join(self.get_app_directory(), 'tickets')}\n"
-            error_msg += f"- Carpeta tickets existe: {os.path.exists(os.path.join(self.get_app_directory(), 'tickets'))}\n"
-            error_msg += f"- Permisos de escritura: {os.access(self.get_app_directory(), os.W_OK)}\n"
             messagebox.showerror("Error", error_msg)
             print(f"Error detallado: {e}")
             import traceback
