@@ -137,7 +137,7 @@ class SistemaComandas:
         y = (screen_height - window_height) // 2
         
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.root.configure(bg="#F8F9FA")
+        self.root.configure(bg="#ECF0F1")  # Fondo gris claro para toda la aplicación
         
         # Configurar ícono de manera segura
         try:
@@ -246,9 +246,18 @@ class SistemaComandas:
                 precio REAL NOT NULL,
                 categoria TEXT,
                 disponible INTEGER DEFAULT 1,
-                descripcion TEXT
+                descripcion TEXT,
+                imagen TEXT
             )
         ''')
+        
+        # Agregar columna imagen si no existe (para bases de datos existentes)
+        try:
+            self.cursor.execute("ALTER TABLE productos ADD COLUMN imagen TEXT")
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            # La columna ya existe
+            pass
         
         # Tabla de mesas
         self.cursor.execute('''
@@ -389,7 +398,7 @@ class SistemaComandas:
     
     def mostrar_login(self):
         """Muestra la ventana de login"""
-        self.login_frame = tk.Frame(self.root, bg='#F8F9FA')
+        self.login_frame = tk.Frame(self.root, bg='#ECF0F1')
         self.login_frame.place(relx=0.5, rely=0.5, anchor='center')
 
         # Logo/Título
@@ -397,7 +406,7 @@ class SistemaComandas:
             self.login_frame, 
             text="🍽️ Sistema de Comandas", 
             font=('Arial', 28, 'bold'),
-            bg='#F8F9FA',
+            bg='#ECF0F1',
             fg='#DC3545'
         ).pack(pady=30)
         
@@ -406,7 +415,7 @@ class SistemaComandas:
             self.login_frame, 
             text="Usuario:", 
             font=('Arial', 14),
-            bg='#F8F9FA'
+            bg='#ECF0F1'
         ).pack(pady=8)
         
         self.entry_usuario = tk.Entry(self.login_frame, font=('Arial', 14), width=25)
@@ -417,7 +426,7 @@ class SistemaComandas:
             self.login_frame, 
             text="Contraseña:", 
             font=('Arial', 14),
-            bg='#F8F9FA'
+            bg='#ECF0F1'
         ).pack(pady=8)
         
         self.entry_password = tk.Entry(self.login_frame, font=('Arial', 14), width=25, show='*')
@@ -487,8 +496,8 @@ class SistemaComandas:
     
     def mostrar_interfaz_principal(self):
         """Muestra la interfaz principal del sistema"""
-        # Header más compacto
-        header = tk.Frame(self.root, bg='#DC3545', height=50)
+        # Header más compacto con mejor color
+        header = tk.Frame(self.root, bg='#2C3E50', height=50)  # Azul oscuro elegante
         header.pack(fill='x')
         header.pack_propagate(False)
         
@@ -496,7 +505,7 @@ class SistemaComandas:
             header,
             text="🍽️ Sistema de Comandas",
             font=('Arial', 14, 'bold'),
-            bg='#DC3545',
+            bg='#2C3E50',
             fg='white'
         ).pack(side='left', padx=15, pady=10)
         
@@ -504,7 +513,7 @@ class SistemaComandas:
             header,
             text=f"👤 {self.usuario_actual['nombre']}",
             font=('Arial', 10),
-            bg='#DC3545',
+            bg='#2C3E50',
             fg='white'
         ).pack(side='right', padx=8)
         
@@ -512,15 +521,21 @@ class SistemaComandas:
             header,
             text="Cerrar Sesión",
             font=('Arial', 9),
-            bg="#B02A37",
+            bg="#34495E",  # Azul más claro para el botón
             fg='white',
             command=self.logout,
-            cursor='hand2'
+            cursor='hand2',
+            relief='flat',
+            padx=10
         ).pack(side='right', padx=8, pady=8)
         
         # Notebook (pestañas)
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Binding para recalcular layout cuando cambie el tamaño de la ventana
+        self.root.bind('<Configure>', self.on_window_resize)
+        self._resize_timer = None
         
         # Crear pestañas según el rol
         self.crear_pestaña_comandas()
@@ -545,7 +560,7 @@ class SistemaComandas:
     
     def crear_pestaña_comandas(self):
         """Crea la pestaña principal de comandas (diseño táctil)"""
-        frame_comandas = tk.Frame(self.notebook, bg='#F8F9FA')
+        frame_comandas = tk.Frame(self.notebook, bg='#ECF0F1')  # Fondo gris claro
         self.notebook.add(frame_comandas, text='📝 Nueva Comanda')
 
         # Verificar si usar mesas está habilitado
@@ -553,7 +568,7 @@ class SistemaComandas:
         
         # Frame superior - Selección de mesa (solo si usar_mesas está habilitado)
         if usar_mesas:
-            frame_mesa = tk.Frame(frame_comandas, bg='#E9ECEF', relief='raised', bd=2, height=80)
+            frame_mesa = tk.Frame(frame_comandas, bg='#D5DBDB', relief='raised', bd=1, height=80)  # Gris más oscuro
             frame_mesa.pack(fill='x', padx=5, pady=3)
             frame_mesa.pack_propagate(False)
             
@@ -561,7 +576,8 @@ class SistemaComandas:
                 frame_mesa,
                 text="🪑 Mesa:",
                 font=('Arial', 12, 'bold'),
-                bg='#E9ECEF'
+                bg='#D5DBDB',
+                fg='#2C3E50'
             ).pack(side='left', padx=10, pady=5)
             
             # Botones de mesas (más compactos)
@@ -578,7 +594,7 @@ class SistemaComandas:
             self.label_mesa_actual.pack(side='right', padx=10, pady=5)
         else:
             # Si no se usan mesas, crear un frame informativo simple
-            frame_info = tk.Frame(frame_comandas, bg='#E8F5E8', relief='raised', bd=2, height=60)
+            frame_info = tk.Frame(frame_comandas, bg='#D5EDDA', relief='raised', bd=1, height=60)  # Verde muy claro
             frame_info.pack(fill='x', padx=5, pady=3)
             frame_info.pack_propagate(False)
             
@@ -586,16 +602,16 @@ class SistemaComandas:
                 frame_info,
                 text="🍽️ Modo Sin Mesas - Las comandas se procesarán directamente",
                 font=('Arial', 12, 'bold'),
-                bg='#E8F5E8',
+                bg='#D5EDDA',
                 fg='#155724'
             ).pack(pady=15)
         
         # Contenedor principal con scroll si es necesario
-        contenedor_principal = tk.Frame(frame_comandas, bg='#F8F9FA')
+        contenedor_principal = tk.Frame(frame_comandas, bg='#ECF0F1')  # Fondo gris claro
         contenedor_principal.pack(fill='both', expand=True, padx=5, pady=3)
         
         # Frame izquierdo - Categorías y productos (70% del ancho)
-        frame_izq = tk.Frame(contenedor_principal, bg='#F8F9FA')
+        frame_izq = tk.Frame(contenedor_principal, bg='#ECF0F1')
         frame_izq.pack(side='left', fill='both', expand=True, padx=3)
         
         # Verificar si usar categorías está habilitado
@@ -607,13 +623,14 @@ class SistemaComandas:
                 frame_izq,
                 text="📂 Categorías",
                 font=('Arial', 12, 'bold'),
-                bg='#F8F9FA'
+                bg='#ECF0F1',
+                fg='#2C3E50'
             ).pack(pady=5)
             
             # Frame con scroll horizontal para categorías
-            canvas_categorias = tk.Canvas(frame_izq, bg='#F8F9FA', height=60)
+            canvas_categorias = tk.Canvas(frame_izq, bg='#ECF0F1', height=60)
             scrollbar_cat_h = ttk.Scrollbar(frame_izq, orient="horizontal", command=canvas_categorias.xview)
-            self.frame_categorias = tk.Frame(canvas_categorias, bg='#F8F9FA')
+            self.frame_categorias = tk.Frame(canvas_categorias, bg='#ECF0F1')
             
             self.frame_categorias.bind(
                 "<Configure>",
@@ -631,27 +648,40 @@ class SistemaComandas:
             frame_izq,
             text="🍽️ Productos",
             font=('Arial', 12, 'bold'),
-            bg='#F8F9FA'
+            bg='#ECF0F1',
+            fg='#2C3E50'
         ).pack(pady=(10, 5))
         
         # Frame con scroll para productos (altura fija)
-        canvas_productos = tk.Canvas(frame_izq, bg='#F8F9FA', height=450)
+        canvas_productos = tk.Canvas(frame_izq, bg='#ECF0F1', height=450)  # Gris muy claro
         scrollbar_productos = ttk.Scrollbar(frame_izq, orient="vertical", command=canvas_productos.yview)
-        self.frame_productos_scroll = tk.Frame(canvas_productos, bg='#F8F9FA')
+        self.frame_productos_scroll = tk.Frame(canvas_productos, bg='#ECF0F1')
+        
+        # Guardar referencia al canvas para redimensionamiento
+        self.canvas_productos = canvas_productos
         
         self.frame_productos_scroll.bind(
             "<Configure>",
             lambda e: canvas_productos.configure(scrollregion=canvas_productos.bbox("all"))
         )
         
-        canvas_productos.create_window((0, 0), window=self.frame_productos_scroll, anchor="nw")
+        # Redimensionar el frame interno cuando cambie el tamaño del canvas
+        def on_canvas_configure(event):
+            canvas_productos.configure(scrollregion=canvas_productos.bbox("all"))
+            # Ajustar el ancho del frame interno al ancho del canvas
+            canvas_width = event.width
+            canvas_productos.itemconfig(window_id, width=canvas_width)
+        
+        canvas_productos.bind('<Configure>', on_canvas_configure)
+        
+        window_id = canvas_productos.create_window((0, 0), window=self.frame_productos_scroll, anchor="nw")
         canvas_productos.configure(yscrollcommand=scrollbar_productos.set)
         
         canvas_productos.pack(side="left", fill="both", expand=True)
         scrollbar_productos.pack(side="right", fill="y")
         
         # Frame derecho - Comanda actual (30% del ancho, ancho fijo)
-        frame_der = tk.Frame(contenedor_principal, bg='#F8F9FA', width=320)
+        frame_der = tk.Frame(contenedor_principal, bg='#D5DBDB', width=320)  # Gris medio
         frame_der.pack(side='right', fill='y', padx=3)
         frame_der.pack_propagate(False)
         
@@ -659,11 +689,12 @@ class SistemaComandas:
             frame_der,
             text="📋 Comanda",
             font=('Arial', 12, 'bold'),
-            bg='#F8F9FA'
+            bg='#D5DBDB',
+            fg='#2C3E50'
         ).pack(pady=5)
         
         # Lista de la comanda (altura fija)
-        frame_comanda = tk.Frame(frame_der, bg='#F8F9FA', height=200)
+        frame_comanda = tk.Frame(frame_der, bg='#D5DBDB', height=200)
         frame_comanda.pack(fill='x', pady=5)
         frame_comanda.pack_propagate(False)
         
@@ -673,7 +704,12 @@ class SistemaComandas:
         self.lista_comanda = tk.Listbox(
             frame_comanda,
             font=('Arial', 9),
-            yscrollcommand=scrollbar_comanda.set
+            yscrollcommand=scrollbar_comanda.set,
+            bg='#FDFEFE',  # Blanco suave
+            fg='#2C3E50',
+            selectbackground='#85C1E9',  # Azul claro para selección
+            relief='flat',
+            bd=1
         )
         self.lista_comanda.pack(side='left', fill='both', expand=True)
         scrollbar_comanda.config(command=self.lista_comanda.yview)
@@ -874,37 +910,41 @@ class SistemaComandas:
         for widget in self.frame_categorias.winfo_children():
             widget.destroy()
         
-        # Botón "Todas"
+        # Botón "Todas" con nuevo diseño
         tk.Button(
             self.frame_categorias,
             text="🍽️ Todas",
             font=('Arial', 10, 'bold'),
-            bg='#6C757D',
+            bg='#5D6D7E',  # Gris azulado elegante
             fg='white',
             command=lambda: self.filtrar_productos(None),
             width=10,
             height=1,
-            cursor='hand2'
-        ).pack(side='left', padx=1)
+            cursor='hand2',
+            relief='flat',
+            bd=0
+        ).pack(side='left', padx=2, pady=5)
         
         # Obtener categorías únicas
         self.cursor.execute('SELECT DISTINCT categoria FROM productos WHERE disponible = 1 ORDER BY categoria')
         categorias = self.cursor.fetchall()
         
+        # Colores más suaves y elegantes
         colores_categoria = {
-            'Hamburguesas': '#FF6B6B',
-            'Pizzas': '#4ECDC4',
-            'Platos Principales': '#45B7D1',
-            'Ensaladas': '#96CEB4',
-            'Guarniciones': '#FECA57',
-            'Bebidas': '#74B9FF',
-            'Cafetería': '#A29BFE',
-            'Otros': '#FD79A8'
+            'Hamburguesas': '#E74C3C',  # Rojo suave
+            'Pizzas': '#F39C12',       # Naranja
+            'Platos Principales': '#3498DB',  # Azul
+            'Ensaladas': '#27AE60',    # Verde
+            'Guarniciones': '#F1C40F', # Amarillo
+            'Bebidas': '#9B59B6',      # Púrpura
+            'Cafetería': '#8B4513',    # Marrón
+            'Postres': '#E91E63',      # Rosa
+            'Otros': '#95A5A6'         # Gris
         }
         
         for categoria in categorias:
             cat_nombre = categoria[0]
-            color = colores_categoria.get(cat_nombre, '#6C757D')
+            color = colores_categoria.get(cat_nombre, '#95A5A6')
             
             # Nombre más corto para categorías
             nombre_corto = cat_nombre.replace('Platos Principales', 'Platos').replace('Hamburguesas', 'Hambur.')
@@ -918,8 +958,10 @@ class SistemaComandas:
                 command=lambda c=cat_nombre: self.filtrar_productos(c),
                 width=12,
                 height=1,
-                cursor='hand2'
-            ).pack(side='left', padx=1)
+                cursor='hand2',
+                relief='flat',
+                bd=0
+            ).pack(side='left', padx=2, pady=5)
     
     def filtrar_productos(self, categoria):
         """Filtra productos por categoría"""
@@ -948,72 +990,188 @@ class SistemaComandas:
         
         productos = self.cursor.fetchall()
         
-        # Crear grid de productos (4 columnas para 1024px)
-        columnas = 4
+        if not productos:
+            # Si no hay productos, mostrar mensaje
+            tk.Label(
+                self.frame_productos_scroll,
+                text="No hay productos disponibles",
+                font=('Arial', 12),
+                bg='#F8F9FA',
+                fg='gray'
+            ).pack(expand=True)
+            return
+        
+        # Calcular número de columnas basado en el ancho disponible del canvas
+        try:
+            # Obtener el ancho actual del canvas
+            if hasattr(self, 'canvas_productos'):
+                self.canvas_productos.update_idletasks()
+                canvas_ancho = self.canvas_productos.winfo_width()
+                # Si el canvas aún no está renderizado, usar un ancho por defecto
+                if canvas_ancho <= 1:
+                    canvas_ancho = 700  # Ancho estimado
+            else:
+                canvas_ancho = 700  # Ancho por defecto
+            
+            # Calcular columnas: ancho mínimo por botón 180px, máximo 5 columnas
+            ancho_minimo_boton = 180
+            margen_total = 50  # Márgenes y scrollbar
+            ancho_disponible = canvas_ancho - margen_total
+            columnas_calculadas = max(2, ancho_disponible // ancho_minimo_boton)
+            columnas = min(5, columnas_calculadas)
+            
+            # Si hay pocos productos, ajustar el número de columnas
+            if len(productos) < columnas:
+                columnas = max(2, len(productos))
+                
+        except:
+            # Fallback en caso de error
+            columnas = 4
+        
+        # Configurar el grid para que se expanda uniformemente
+        for col in range(columnas):
+            self.frame_productos_scroll.columnconfigure(col, weight=1, uniform="col")
+        
+        # Calcular filas necesarias
+        filas = (len(productos) + columnas - 1) // columnas
+        
+        # Configurar filas para que se expandan uniformemente con altura mínima
+        altura_minima_fila = 120  # Altura mínima por fila en píxeles
+        for row in range(filas):
+            self.frame_productos_scroll.rowconfigure(row, weight=1, uniform="row", minsize=altura_minima_fila)
+        
         for i, producto in enumerate(productos):
             fila = i // columnas
             columna = i % columnas
             
-            # Frame para cada producto
+            # Crear frame que actúe como botón (en lugar de tk.Button)
+            # Todo el cuadrado es clickeable
             frame_producto = tk.Frame(
                 self.frame_productos_scroll,
-                bg='white',
                 relief='raised',
                 bd=1,
-                width=180,
-                height=120
+                bg='#2C3E50',  # Azul oscuro elegante (mismo color del header)
+                cursor='hand2'
             )
-            frame_producto.grid(row=fila, column=columna, padx=2, pady=2, sticky='ew')
-            frame_producto.pack_propagate(False)
             
-            # Configurar peso de columnas
-            self.frame_productos_scroll.columnconfigure(columna, weight=1)
+            # El frame ocupa toda la celda del grid con padding
+            frame_producto.grid(
+                row=fila, 
+                column=columna, 
+                padx=3, 
+                pady=3, 
+                sticky='nsew'
+            )
             
-            # Nombre del producto (más corto)
+            # Configurar el click para todo el frame
+            def configurar_click_frame(frame, producto_ref=producto):
+                def on_click(event):
+                    self.agregar_a_comanda(producto_ref)
+                frame.bind("<Button-1>", on_click)
+                frame.configure(cursor='hand2')
+            
+            configurar_click_frame(frame_producto)
+            
+            # Contenido del frame-botón (formato original con texto)
+            # Nombre del producto
             nombre_corto = producto[1][:25] + "..." if len(producto[1]) > 25 else producto[1]
-            tk.Label(
+            label_nombre = tk.Label(
                 frame_producto,
                 text=nombre_corto,
-                font=('Arial', 10, 'bold'),
-                bg='white',
-                wraplength=170
-            ).pack(pady=2)
+                font=('Arial', 11, 'bold'),
+                bg='#2C3E50',
+                fg='white',  # Texto blanco para contraste
+                wraplength=150,
+                justify='center',
+                cursor='hand2'
+            )
+            label_nombre.pack(pady=(8, 2))
             
             # Precio (solo si está habilitado)
             mostrar_precios = self.config.get('mostrar_precios_menu', True)
             if mostrar_precios:
-                tk.Label(
+                label_precio = tk.Label(
                     frame_producto,
                     text=f"${producto[2]}",
-                    font=('Arial', 14, 'bold'),
-                    bg='white',
-                    fg='#DC3545'
-                ).pack()
+                    font=('Arial', 16, 'bold'),
+                    bg='#2C3E50',
+                    fg='#F39C12',  # Naranja dorado para el precio
+                    cursor='hand2'
+                )
+                label_precio.pack(pady=2)
             
             # Descripción (más corta)
             if producto[5]:  # descripcion
-                desc_corta = producto[5][:40] + "..." if len(producto[5]) > 40 else producto[5]
-                tk.Label(
+                desc_corta = producto[5][:35] + "..." if len(producto[5]) > 35 else producto[5]
+                label_desc = tk.Label(
                     frame_producto,
                     text=desc_corta,
-                    font=('Arial', 8),
-                    bg='white',
-                    fg='gray',
-                    wraplength=160
-                ).pack(pady=1)
+                    font=('Arial', 9),
+                    bg='#2C3E50',
+                    fg='#BDC3C7',  # Gris claro para descripción
+                    wraplength=140,
+                    justify='center',
+                    cursor='hand2'
+                )
+                label_desc.pack(pady=(0, 5))
             
-            # Botón agregar (más compacto)
-            tk.Button(
+            # Indicador visual de que es clickeable
+            label_agregar = tk.Label(
                 frame_producto,
-                text="➕ Agregar",
-                font=('Arial', 10, 'bold'),
-                bg='#28A745',
+                text="➕ Toca para agregar",
+                font=('Arial', 9, 'bold'),
+                bg='#27AE60',  # Verde más suave
                 fg='white',
-                command=lambda p=producto: self.agregar_a_comanda(p),
-                width=12,
-                height=1,
-                cursor='hand2'
-            ).pack(pady=2, padx=2, side='bottom')
+                cursor='hand2',
+                relief='flat',
+                padx=8,
+                pady=2
+            )
+            label_agregar.pack(side='bottom', pady=(5, 8))
+            # Hacer que todos los labels también respondan al click
+            def configurar_click_label(widget, producto_ref=producto):
+                def on_click(event):
+                    self.agregar_a_comanda(producto_ref)
+                widget.bind("<Button-1>", on_click)
+            
+            configurar_click_label(label_nombre)
+            if mostrar_precios:
+                configurar_click_label(label_precio)
+            if producto[5]:
+                configurar_click_label(label_desc)
+            configurar_click_label(label_agregar)
+        
+        # Forzar actualización del layout
+        self.frame_productos_scroll.update_idletasks()
+    
+    def on_window_resize(self, event):
+        """Maneja el redimensionamiento de la ventana con debounce"""
+        # Solo procesar eventos de redimensionamiento de la ventana principal
+        if event.widget != self.root:
+            return
+            
+        # Cancelar timer anterior si existe
+        if self._resize_timer:
+            self.root.after_cancel(self._resize_timer)
+        
+        # Programar recalculo del layout con delay
+        self._resize_timer = self.root.after(100, self.recalcular_layout_productos)
+    
+    def recalcular_layout_productos(self):
+        """Recalcula el layout de productos cuando cambia el tamaño de la ventana"""
+        try:
+            # Solo recalcular si tenemos productos cargados y la pestaña de comandas está activa
+            if (hasattr(self, 'frame_productos_scroll') and 
+                hasattr(self, 'notebook') and 
+                self.notebook.index(self.notebook.select()) == 0):  # Primera pestaña (comandas)
+                
+                # Recarga los productos para que se ajusten al nuevo tamaño
+                self.cargar_productos()
+        except Exception as e:
+            # Ignorar errores de redimensionamiento para no interrumpir la funcionalidad
+            pass
+        finally:
+            self._resize_timer = None
     
     def agregar_a_comanda(self, producto):
         """Agrega un producto a la comanda actual"""
@@ -1735,7 +1893,7 @@ class SistemaComandas:
             frame_form,
             text="Agregar/Editar Producto",
             font=('Arial', 16, 'bold'),
-            bg='#F8F9FA'
+            bg="#F8F9FA"
         ).pack(pady=15)
         
         # Campos del formulario
