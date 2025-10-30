@@ -26,7 +26,9 @@ class ConfigManager:
             'actualizacion_automatica': {'valor': 'true', 'descripcion': 'Actualización automática de mesas', 'tipo': 'boolean'},
             'mostrar_precios_menu': {'valor': 'true', 'descripcion': 'Mostrar precios en el menú de productos', 'tipo': 'boolean'},
             'permitir_comandas_sin_mesa': {'valor': 'false', 'descripcion': 'Permitir comandas sin asignar mesa', 'tipo': 'boolean'},
-            'mostrar_control_comandas': {'valor': 'true', 'descripcion': 'Mostrar pestaña de control de comandas y estados', 'tipo': 'boolean'}
+            'mostrar_control_comandas': {'valor': 'true', 'descripcion': 'Mostrar pestaña de control de comandas y estados', 'tipo': 'boolean'},
+            'usar_sistema_usuarios': {'valor': 'true', 'descripcion': 'Habilitar sistema de usuarios y login', 'tipo': 'boolean'},
+            'usuario_predeterminado': {'valor': 'admin', 'descripcion': 'Usuario predeterminado cuando el login está desactivado', 'tipo': 'string'}
         }
         self.inicializar_configuraciones()
     
@@ -161,10 +163,60 @@ class SistemaComandas:
         self.mesa_actual = None
         self.numero_comanda = None
         
-        # Mostrar login
-        self.mostrar_login()
+        # Verificar si usar sistema de usuarios
+        self.iniciar_sistema()
         logging.basicConfig(level=logging.INFO, format='%(message)s')
+    
+    def iniciar_sistema(self):
+        """Decide si mostrar login o iniciar directamente con usuario predeterminado"""
+        usar_usuarios = self.config.get('usar_sistema_usuarios', True)
         
+        if usar_usuarios:
+            # Sistema normal con login
+            self.mostrar_login()
+        else:
+            # Acceso directo con usuario predeterminado
+            usuario_predeterminado = self.config.get('usuario_predeterminado', 'admin')
+            self.iniciar_con_usuario_predeterminado(usuario_predeterminado)
+    
+    def iniciar_con_usuario_predeterminado(self, nombre_usuario):
+        """Inicia el sistema con un usuario predeterminado sin login"""
+        try:
+            # Buscar el usuario en la base de datos
+            self.cursor.execute('SELECT * FROM usuarios WHERE usuario = ?', (nombre_usuario,))
+            usuario = self.cursor.fetchone()
+            
+            if usuario:
+                # Usuario encontrado - iniciar sesión
+                self.usuario_actual = {
+                    'id': usuario[0],
+                    'nombre': usuario[1],  # usuario[1] es la columna 'usuario'
+                    'rol': usuario[4]      # usuario[4] es la columna 'rol'
+                }
+                self.mostrar_interfaz_principal()
+            else:
+                # Usuario no encontrado - crear usuario temporal admin
+                messagebox.showwarning(
+                    "Usuario no encontrado", 
+                    f"El usuario predeterminado '{nombre_usuario}' no existe.\n"
+                    f"Se creará un usuario administrador temporal."
+                )
+                
+                # Crear usuario admin temporal
+                self.usuario_actual = {
+                    'id': 0,
+                    'nombre': 'admin_temp',
+                    'rol': 'admin'
+                }
+                self.mostrar_interfaz_principal()
+        except Exception as e:
+            messagebox.showerror(
+                "Error de sistema", 
+                f"Error al iniciar con usuario predeterminado: {str(e)}\n"
+                f"Iniciando modo login normal."
+            )
+            self.mostrar_login()
+
     def get_resource_path(self, *args):
         """Obtiene la ruta correcta para recursos tanto en desarrollo como en ejecutable"""
         try:
@@ -2844,9 +2896,9 @@ class SistemaComandas:
             # Insertar nuevo usuario
             activo = 1 if estado == 'Activo' else 0
             cursor.execute("""
-                INSERT INTO usuarios (nombre, usuario, password, nombre_completo, rol, activo)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (usuario, usuario, password, nombre_completo, rol, activo))
+                INSERT INTO usuarios (usuario, password, nombre_completo, rol, activo)
+                VALUES (?, ?, ?, ?, ?)
+            """, (usuario, password, nombre_completo, rol, activo))
             self.conn.commit()
             
             messagebox.showinfo("Éxito", f"Usuario '{usuario}' creado correctamente")
@@ -3267,6 +3319,9 @@ class SistemaComandas:
                 'usar_mesas', 'usar_categorias', 'usar_observaciones', 
                 'generar_tickets', 'permitir_comandas_sin_mesa', 'mostrar_control_comandas'
             ],
+            'Sistema de Usuarios': [
+                'usar_sistema_usuarios', 'usuario_predeterminado'
+            ],
             'Interfaz y Presentación': [
                 'mostrar_precios_menu', 'actualizacion_automatica'
             ],
@@ -3346,17 +3401,43 @@ class SistemaComandas:
             )
             label.grid(row=0, column=0, sticky='ew', pady=2)
             
-            # Entry para valores string/integer/float
-            var = tk.StringVar()
-            var.set(str(config['valor']))
-            control = tk.Entry(
-                config_frame,
-                textvariable=var,
-                font=('Arial', 10),
-                width=20
-            )
-            control.grid(row=1, column=0, sticky='ew', padx=5, pady=2)
-            self.controles_config[clave] = var
+            # Control especial para usuario_predeterminado
+            if clave == 'usuario_predeterminado':
+                # Combobox con lista de usuarios
+                var = tk.StringVar()
+                var.set(str(config['valor']))
+                
+                # Obtener lista de usuarios
+                try:
+                    self.cursor.execute('SELECT usuario FROM usuarios ORDER BY usuario')
+                    usuarios = [user[0] for user in self.cursor.fetchall()]
+                    if not usuarios:
+                        usuarios = ['admin']  # Fallback si no hay usuarios
+                except:
+                    usuarios = ['admin']  # Fallback en caso de error
+                
+                control = ttk.Combobox(
+                    config_frame,
+                    textvariable=var,
+                    values=usuarios,
+                    font=('Arial', 10),
+                    width=18,
+                    state='readonly'
+                )
+                control.grid(row=1, column=0, sticky='ew', padx=5, pady=2)
+                self.controles_config[clave] = var
+            else:
+                # Entry para valores string/integer/float normales
+                var = tk.StringVar()
+                var.set(str(config['valor']))
+                control = tk.Entry(
+                    config_frame,
+                    textvariable=var,
+                    font=('Arial', 10),
+                    width=20
+                )
+                control.grid(row=1, column=0, sticky='ew', padx=5, pady=2)
+                self.controles_config[clave] = var
     
     def guardar_configuracion(self):
         """Guarda todas las configuraciones modificadas"""
@@ -3381,6 +3462,18 @@ class SistemaComandas:
                         cambios_realizados.append(clave)
             
             if cambios_realizados:
+                # Verificar si se desactivó el sistema de usuarios
+                if 'usar_sistema_usuarios' in cambios_realizados:
+                    usar_usuarios = self.config.get('usar_sistema_usuarios', True)
+                    if not usar_usuarios:
+                        usuario_pred = self.config.get('usuario_predeterminado', 'admin')
+                        messagebox.showinfo(
+                            "Sistema de Usuarios Desactivado", 
+                            f"🔓 Se ha desactivado el sistema de usuarios.\n\n"
+                            f"El sistema iniciará automáticamente con el usuario: '{usuario_pred}'\n\n"
+                            f"Para que este cambio tome efecto, debes cerrar y volver a abrir la aplicación."
+                        )
+                
                 mensaje = f"✅ Configuración guardada exitosamente!\n\n"
                 mensaje += f"Configuraciones modificadas:\n"
                 for clave in cambios_realizados:
